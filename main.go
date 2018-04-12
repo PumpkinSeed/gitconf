@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"reflect"
@@ -12,17 +14,8 @@ import (
 	"time"
 )
 
-const fileName = "example.json"
-
-func main() {
-	content := buildText(open())
-	fmt.Println(string(content))
-	configFile := getFolderName(os.Args[1])
-	fmt.Println(configFile)
-	//s := run(5, "git", "clone", os.Args[1])
-	//fmt.Printf(s)
-
-}
+const fileName = "gitconfig.json"
+const gitConfigFolder = "/.git/config"
 
 type Config struct {
 	Name     string `json:"name"`
@@ -30,11 +23,41 @@ type Config struct {
 	Email    string `json:"email"`
 }
 
+func main() {
+	content := buildText(open())
+	configFile := getFolderName(os.Args[1])
+	err := run(5, "git", "clone", os.Args[1])
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	err = writeConfig(content, configFile)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	fmt.Println("Done!")
+}
+
+func writeConfig(content []byte, file string) error {
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+
+	defer f.Close()
+
+	if _, err = f.Write(content); err != nil {
+		return err
+	}
+	return nil
+}
+
 func open() Config {
 	var c = Config{}
 	dat, err := ioutil.ReadFile(fileName)
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 		return c
 	}
 	json.Unmarshal(dat, &c)
@@ -85,8 +108,6 @@ func getValue(c Config, tag string) string {
 	return ""
 }
 
-const gitConfigFolder = "/.git/config"
-
 func getFolderName(arg string) string {
 	result := strings.Split(arg, "/")
 	result = strings.Split(result[1], ".")
@@ -94,7 +115,7 @@ func getFolderName(arg string) string {
 	return result[0] + gitConfigFolder
 }
 
-func run(timeout int, command string, args ...string) string {
+func run(timeout int, command string, args ...string) error {
 
 	// instantiate new command
 	cmd := exec.Command(command, args...)
@@ -102,12 +123,12 @@ func run(timeout int, command string, args ...string) string {
 	// get pipe to standard output
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "cmd.StdoutPipe() error: " + err.Error()
+		return err
 	}
 
 	// start process via command
 	if err := cmd.Start(); err != nil {
-		return "cmd.Start() error: " + err.Error()
+		return err
 	}
 
 	// setup a buffer to capture standard output
@@ -126,15 +147,14 @@ func run(timeout int, command string, args ...string) string {
 	select {
 	case <-time.After(time.Duration(timeout) * time.Second):
 		if err := cmd.Process.Kill(); err != nil {
-			return "failed to kill: " + err.Error()
+			return err
 		}
-		return "timeout reached, process killed"
+		return errors.New("timeout reached, process killed")
 	case err := <-done:
 		if err != nil {
 			close(done)
-			return "process done, with error: " + err.Error()
+			return err
 		}
-		return "process completed: " + buf.String()
+		return nil
 	}
-	return ""
 }
